@@ -65,7 +65,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
-    """仅下载压缩音频，速度快且体积小"""
+    """仅下载压缩音频，并通过模拟移动端客户端绕过 YouTube 机器人拦截"""
     if os.path.exists(output_path):
         os.remove(output_path)
         
@@ -77,6 +77,12 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
             'preferredcodec': 'mp3',
             'preferredquality': '64',
         }],
+        # 核心：指定使用 ios, android, mweb 客户端，绕过机房 IP 的 Sign-in 拦截
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'mweb']
+            }
+        },
         'quiet': False,
         'no_warnings': True
     }
