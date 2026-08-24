@@ -9,7 +9,6 @@ import yt_dlp
 import markdown
 from google import genai
 
-# 频道配置
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
@@ -28,7 +27,8 @@ def load_history():
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            print(f"读取历史记录出错: {e}")
             return []
     return []
 
@@ -40,57 +40,66 @@ def get_latest_videos_rss(channel_id, max_check=2):
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     req = urllib.request.Request(
         rss_url,
-        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
     )
     videos = []
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        xml_data = resp.read()
-        root = ET.fromstring(xml_data)
-        ns = {
-            'atom': 'http://www.w3.org/2005/Atom',
-            'yt': 'http://www.youtube.com/xml/schemas/2015'
-        }
-        entries = root.findall('atom:entry', ns)
-        for entry in entries[:max_check]:
-            v_id_el = entry.find('yt:videoId', ns)
-            title_el = entry.find('atom:title', ns)
-            if v_id_el is not None and title_el is not None:
-                videos.append({
-                    'id': v_id_el.text,
-                    'title': title_el.text,
-                    'url': f"https://www.youtube.com/watch?v={v_id_el.text}"
-                })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            xml_data = resp.read()
+            root = ET.fromstring(xml_data)
+            ns = {
+                'atom': 'http://www.w3.org/2005/Atom',
+                'yt': 'http://www.youtube.com/xml/schemas/2015'
+            }
+            entries = root.findall('atom:entry', ns)
+            for entry in entries[:max_check]:
+                v_id_el = entry.find('yt:videoId', ns)
+                title_el = entry.find('atom:title', ns)
+                if v_id_el is not None and title_el is not None:
+                    videos.append({
+                        'id': v_id_el.text,
+                        'title': title_el.text,
+                        'url': f"https://www.youtube.com/watch?v={v_id_el.text}"
+                    })
+    except Exception as e:
+        print(f"RSS 请求异常 ({channel_id}): {e}")
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
-    """强制使用移动端与TV客户端解析流，避开 Web 端的流限制"""
     if os.path.exists(output_path):
         os.remove(output_path)
         
     cookie_file = None
-    if "YT_COOKIES" in os.environ and os.environ["YT_COOKIES"].strip():
-        cookie_file = "temp_cookies.txt"
+    yt_cookies = os.environ.get("YT_COOKIES", "").strip()
+    if yt_cookies:
+        cookie_file = os.path.abspath("temp_cookies.txt")
         with open(cookie_file, "w", encoding="utf-8") as f:
-            f.write(os.environ["YT_COOKIES"].strip())
+            if not yt_cookies.startswith("# Netscape"):
+                f.write("# Netscape HTTP Cookie File\n")
+            f.write(yt_cookies + "\n")
+        print(f"✅ 已成功挂载 YouTube Cookies（长度: {len(yt_cookies)} 字符）")
+    else:
+        print("⚠️ 警告: 未在环境变量中检测到 YT_COOKIES！")
 
     ydl_opts = {
-        # 宽容选择音频流，不限特定编码
-        'format': 'ba/ba*/b',
+        'format': 'bestaudio/best',
         'outtmpl': 'temp_audio.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '64',
         }],
-        # 核心：仅保留 android, ios, tv_embedded，彻底排除 web
+        # 配合 Web Cookies 使用 web / mweb 客户端
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'tv_embedded'],
-                'player_skip': ['web', 'configs'],
+                'player_client': ['web', 'mweb', 'android'],
             }
         },
         'quiet': False,
-        'no_warnings': True
+        'no_warnings': False
     }
     
     if cookie_file and os.path.exists(cookie_file):
@@ -111,7 +120,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
 def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
-    print(f"正在上传音频到 Gemini File API: {video_title}...")
+    print(f"正在上传音频至 Gemini File API: {video_title}...")
     uploaded_file = client.files.upload(file=audio_path)
     
     prompt = f"""
