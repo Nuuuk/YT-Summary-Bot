@@ -1,5 +1,6 @@
 import os
 import json
+import time  # <--- 新增
 import smtplib
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -165,10 +166,14 @@ def main():
                 print(f"  └ 发现新视频，交给 Gemini 分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
                 
-                subject = f"【YouTube总结】{name}：{video['title']}"
-                send_email(subject, summary)
+                max_title_length = 30 # Adjust the length as needed
+                short_title = video['title'][:max_title_length] + "..." if len(video['title']) > max_title_length else video['title']
+                subject = f"【YT】{name}：{short_title}"
                 
                 new_history.append(v_id)
+                # ======== 新增：避开 API 每分钟限流 ========
+                print("已处理完一个视频，休眠 60 秒以恢复免费 Token 额度...")
+                time.sleep(60)
                     
         except Exception as e:
             print(f"处理频道 [{name}] 出现异常: {e}")
