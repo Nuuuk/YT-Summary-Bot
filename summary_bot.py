@@ -65,6 +65,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
+    """宽容匹配音频格式，由 FFmpeg 统一提取并压缩为 MP3"""
     if os.path.exists(output_path):
         os.remove(output_path)
         
@@ -75,7 +76,8 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
             f.write(os.environ["YT_COOKIES"].strip())
 
     ydl_opts = {
-        'format': 'ba[ext=m4a]/ba/b',
+        # 核心改动：使用 bestaudio/best，兼顾直播回放、webm、m4a 及合并视频流
+        'format': 'bestaudio/best',
         'outtmpl': 'temp_audio.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -84,7 +86,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
         }],
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android', 'mweb']
+                'player_client': ['android', 'ios', 'web']
             }
         },
         'quiet': False,
@@ -99,7 +101,10 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
             ydl.download([video_url])
     finally:
         if cookie_file and os.path.exists(cookie_file):
-            os.remove(cookie_file)
+            try:
+                os.remove(cookie_file)
+            except Exception:
+                pass
             
     return output_path
 
