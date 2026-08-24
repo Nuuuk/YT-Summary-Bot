@@ -1,26 +1,24 @@
 import os
+import re
 import json
 import smtplib
+import urllib.request
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import yt_dlp
 import markdown
 from google import genai
 
-# 1. 监控的频道列表（同时支持常规视频 /videos 和直播回放 /streams）
+# 监控的频道列表（支持 Handle 和完整 URL）
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
-        "urls": [
-            "https://www.youtube.com/@%E7%A7%81%E5%8B%9F%E4%B8%80%E5%93%A5%E5%B8%B8%E5%A3%AB%E6%9D%89/streams",
-            "https://www.youtube.com/@%E7%A7%81%E5%8B%9F%E4%B8%80%E5%93%A5%E5%B8%B8%E5%A3%AB%E6%9D%89/videos"
-        ]
+        "url": "https://www.youtube.com/@%E7%A7%81%E5%8B%9F%E4%B8%80%E5%93%A5%E5%B8%B8%E5%A3%AB%E6%9D%89"
     },
     {
         "name": "RhinoFinance",
-        "urls": [
-            "https://www.youtube.com/@RhinoFinance/videos"
-        ]
+        "url": "https://www.youtube.com/@RhinoFinance"
     }
 ]
 
@@ -28,37 +26,59 @@ HISTORY_FILE = "processed_videos.json"
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
     return []
 
 def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def get_latest_videos(channel_urls, max_check=2):
-    """获取频道最新发布的视频 ID 和标题"""
+def get_channel_id(channel_url):
+    """自动从 YouTube 频道主页解析出官方 Channel ID (UC...)"""
+    req = urllib.request.Request(
+        channel_url, 
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        html = resp.read().decode('utf-8', errors='ignore')
+        match = re.search(r'href="https://www.youtube.com/channel/(UC[\w-]+)"', html)
+        if not match:
+            match = re.search(r'"channelId":"(UC[\w-]+)"', html)
+        if not match:
+            match = re.search(r'itemprop="channelId" content="(UC[\w-]+)"', html)
+        if match:
+            return match.group(1)
+    return None
+
+def get_latest_videos_rss(channel_id, max_check=2):
+    """通过 YouTube 官方 RSS 接口获取最新视频，绝不被封锁"""
+    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    req = urllib.request.Request(
+        rss_url,
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    )
     videos = []
-    ydl_opts = {
-        'extract_flat': True,
-        'playlistend': max_check,
-        'quiet': True,
-        'no_warnings': True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        for url in channel_urls:
-            try:
-                info = ydl.extract_info(url, download=False)
-                if 'entries' in info:
-                    for entry in info['entries']:
-                        if entry:
-                            videos.append({
-                                'id': entry.get('id'),
-                                'title': entry.get('title'),
-                                'url': f"https://www.youtube.com/watch?v={entry.get('id')}"
-                            })
-            except Exception as e:
-                print(f"抓取频道页面失败 {url}: {e}")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        xml_data = resp.read()
+        root = ET.fromstring(xml_data)
+        ns = {
+            'atom': 'http://www.w3.org/2005/Atom',
+            'yt': 'http://www.youtube.com/xml/schemas/2015'
+        }
+        entries = root.findall('atom:entry', ns)
+        for entry in entries[:max_check]:
+            v_id_el = entry.find('yt:videoId', ns)
+            title_el = entry.find('atom:title', ns)
+            if v_id_el is not None and title_el is not None:
+                videos.append({
+                    'id': v_id_el.text,
+                    'title': title_el.text,
+                    'url': f"https://www.youtube.com/watch?v={v_id_el.text}"
+                })
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
@@ -72,7 +92,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '64', # 64kbps 对人声识别完全足够且体积极小
+            'preferredquality': '64',
         }],
         'quiet': True,
         'no_warnings': True
@@ -82,7 +102,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
     return output_path
 
 def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
-    """通过 Gemini 官方 SDK 直接上传音频并进行深度结构化总结"""
+    """通过 Gemini 官方 SDK 分析音频"""
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
     print(f"正在上传音频到 Gemini File API: {video_title}...")
@@ -114,14 +134,12 @@ def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
 
 ### 五、 ⚠️ 风险提示与操作策略总结（如有）
 """
-    print("Gemini 正在分析音频并生成总结...")
-    # 使用兼具超长音频理解与极高速度的 flash 模型
+    print("Gemini 正在分析音频并生成观点总结...")
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=[uploaded_file, prompt]
     )
     
-    # 清理远程云端缓存文件
     try:
         client.files.delete(name=uploaded_file.name)
     except Exception:
@@ -130,18 +148,17 @@ def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
     return response.text
 
 def send_email(subject, markdown_body):
-    """发送 HTML 格式邮件"""
+    """发送排版邮件"""
     sender = os.environ["SENDER_EMAIL"]
     password = os.environ["SENDER_PASSWORD"]
     receiver = os.environ["RECEIVER_EMAIL"]
     
-    # 将 Markdown 转换为排版良好的 HTML 邮件
     html_content = markdown.markdown(markdown_body, extensions=['extra', 'tables'])
     styled_html = f"""
     <html>
       <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #2d3748; max-width: 800px; margin: 0 auto; padding: 20px;">
         <div style="background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 15px 20px; border-radius: 4px; margin-bottom: 20px;">
-          <h2 style="margin: 0; color: #2b6cb0;">YouTube 财经频道每日观点简报</h2>
+          <h2 style="margin: 0; color: #2b6cb0;">YouTube 财经频道观点简报</h2>
         </div>
         {html_content}
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin-top: 30px;">
@@ -159,7 +176,7 @@ def send_email(subject, markdown_body):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(sender, password)
         server.sendmail(sender, receiver, msg.as_string())
-    print("邮件发送成功！")
+    print(">>> 邮件发送成功！")
 
 def main():
     history = load_history()
@@ -167,36 +184,44 @@ def main():
     
     for channel in CHANNELS:
         name = channel["name"]
-        print(f"正在扫描频道: {name}...")
-        latest_videos = get_latest_videos(channel["urls"])
+        print(f"\n==========================================")
+        print(f"正在扫描频道: {name}")
         
-        for video in latest_videos:
-            v_id = video["id"]
-            if not v_id or v_id in history:
+        try:
+            channel_id = get_channel_id(channel["url"])
+            if not channel_id:
+                print(f"未能解析出 Channel ID: {channel['url']}")
                 continue
-                
-            print(f"发现新视频: {video['title']} ({video['url']})")
-            try:
-                # 1. 下载音频
+            
+            print(f"已获取频道 ID: {channel_id}")
+            latest_videos = get_latest_videos_rss(channel_id, max_check=2)
+            print(f"找到最新视频数量: {len(latest_videos)}")
+            
+            for video in latest_videos:
+                v_id = video["id"]
+                print(f"- 检查视频 [{v_id}]: {video['title']}")
+                if v_id in history:
+                    print(f"  └ 该视频已处理过，跳过。")
+                    continue
+                    
+                print(f"  └ 发现新视频，开始下载音频并生成总结...")
                 audio_file = download_audio(video['url'])
                 
-                # 2. Gemini 听音频并总结
                 summary = summarize_with_gemini(audio_file, name, video['title'], video['url'])
                 
-                # 3. 发送邮件
                 subject = f"【YouTube总结】{name}：{video['title']}"
                 send_email(subject, summary)
                 
-                # 4. 记录已处理
                 new_history.append(v_id)
                 
-                # 清理本地临时音频
                 if os.path.exists(audio_file):
                     os.remove(audio_file)
-            except Exception as e:
-                print(f"处理视频失败 {video['title']}: {e}")
+                    
+        except Exception as e:
+            print(f"处理频道 [{name}] 出现异常: {e}")
                 
     save_history(new_history)
+    print("\n任务全部完成。")
 
 if __name__ == "__main__":
     main()
