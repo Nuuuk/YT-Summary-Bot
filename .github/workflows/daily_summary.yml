@@ -2,12 +2,12 @@ name: YouTube Auto Summary Daily
 
 on:
   schedule:
-    # 每天 UTC 00:00 和 12:00（即北京时间早 8:00 和晚 20:00）自动运行
+    # 每天 UTC 00:00 和 12:00（即美东 20:00 / 08:00）自动运行
     - cron: '0 0,12 * * *'
-  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮立即运行
+  workflow_dispatch:
 
 permissions:
-  contents: write # 允许写入并保存 processed_videos.json 记录
+  contents: write
 
 jobs:
   run-bot:
@@ -20,6 +20,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      # 安装 Node.js 供 yt-dlp 运行 JavaScript 解密 challenge
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install FFmpeg & Dependencies
         run: |
