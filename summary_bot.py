@@ -97,9 +97,9 @@ def summarize_with_gemini(channel_name, video_title, video_url):
 """
     print(f"正在请求 Google Gemini 官方服务器直连分析 YouTube: {video_url}...")
     
-    # 使用官方标准 gemini-2.0-flash 模型
+    # 使用官方标准 gemini-3.6-flash 模型
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-3.6-flash',
         contents=types.Content(
             parts=[
                 types.Part(
