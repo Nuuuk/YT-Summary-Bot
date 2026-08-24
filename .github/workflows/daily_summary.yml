@@ -1,0 +1,45 @@
+name: YouTube Auto Summary Daily
+
+on:
+  schedule:
+    # 每天 UTC 00:00 和 12:00（即北京时间早 8:00 和晚 20:00）自动运行
+    - cron: '0 0,12 * * *'
+  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮立即运行
+
+permissions:
+  contents: write # 允许写入并保存 processed_videos.json 记录
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg & Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install yt-dlp google-genai markdown
+
+      - name: Run Summary Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+        run: |
+          python summary_bot.py
+
+      - name: Save Processed Videos State
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add processed_videos.json || true
+          git commit -m "chore: update processed video history" || true
+          git push || true
