@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import smtplib
 import urllib.request
@@ -10,15 +9,15 @@ import yt_dlp
 import markdown
 from google import genai
 
-# 监控的频道列表（支持 Handle 和完整 URL）
+# 填入提取到的真实 YouTube Channel ID (以 UC 开头)
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
-        "url": "https://www.youtube.com/@%E7%A7%81%E5%8B%9F%E4%B8%80%E5%93%A5%E5%B8%B8%E5%A3%AB%E6%9D%89"
+        "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg"
     },
     {
         "name": "RhinoFinance",
-        "url": "https://www.youtube.com/@RhinoFinance"
+        "channel_id": "UCFQsi7WaF5X41tcuOryDk8w"
     }
 ]
 
@@ -29,7 +28,8 @@ def load_history():
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            print(f"读取历史记录出错: {e}")
             return []
     return []
 
@@ -37,25 +37,8 @@ def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def get_channel_id(channel_url):
-    """自动从 YouTube 频道主页解析出官方 Channel ID (UC...)"""
-    req = urllib.request.Request(
-        channel_url, 
-        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        html = resp.read().decode('utf-8', errors='ignore')
-        match = re.search(r'href="https://www.youtube.com/channel/(UC[\w-]+)"', html)
-        if not match:
-            match = re.search(r'"channelId":"(UC[\w-]+)"', html)
-        if not match:
-            match = re.search(r'itemprop="channelId" content="(UC[\w-]+)"', html)
-        if match:
-            return match.group(1)
-    return None
-
 def get_latest_videos_rss(channel_id, max_check=2):
-    """通过 YouTube 官方 RSS 接口获取最新视频，绝不被封锁"""
+    """直接通过官方 RSS XML 获取最新视频，100% 稳定免风控"""
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     req = urllib.request.Request(
         rss_url,
@@ -82,7 +65,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
-    """仅下载压缩音频，极大提升速度并节省空间"""
+    """仅下载压缩音频，速度快且体积小"""
     if os.path.exists(output_path):
         os.remove(output_path)
         
@@ -94,7 +77,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
             'preferredcodec': 'mp3',
             'preferredquality': '64',
         }],
-        'quiet': True,
+        'quiet': False,
         'no_warnings': True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -102,7 +85,7 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
     return output_path
 
 def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
-    """通过 Gemini 官方 SDK 分析音频"""
+    """调用 Gemini API 提取无字幕音频中的核心观点"""
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
     print(f"正在上传音频到 Gemini File API: {video_title}...")
@@ -184,24 +167,19 @@ def main():
     
     for channel in CHANNELS:
         name = channel["name"]
+        cid = channel["channel_id"]
         print(f"\n==========================================")
-        print(f"正在扫描频道: {name}")
+        print(f"正在扫描频道: {name} (ID: {cid})")
         
         try:
-            channel_id = get_channel_id(channel["url"])
-            if not channel_id:
-                print(f"未能解析出 Channel ID: {channel['url']}")
-                continue
-            
-            print(f"已获取频道 ID: {channel_id}")
-            latest_videos = get_latest_videos_rss(channel_id, max_check=2)
-            print(f"找到最新视频数量: {len(latest_videos)}")
+            latest_videos = get_latest_videos_rss(cid, max_check=2)
+            print(f"成功获取到 {len(latest_videos)} 个最新视频。")
             
             for video in latest_videos:
                 v_id = video["id"]
                 print(f"- 检查视频 [{v_id}]: {video['title']}")
                 if v_id in history:
-                    print(f"  └ 该视频已处理过，跳过。")
+                    print(f"  └ 该视频已在历史记录中，跳过。")
                     continue
                     
                 print(f"  └ 发现新视频，开始下载音频并生成总结...")
