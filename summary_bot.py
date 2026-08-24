@@ -9,6 +9,7 @@ import yt_dlp
 import markdown
 from google import genai
 
+# 频道配置（常士杉 ID 已确认，请确认 RhinoFinance 的 ID）
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
@@ -16,7 +17,7 @@ CHANNELS = [
     },
     {
         "name": "RhinoFinance",
-        "channel_id": "UCFQS17WaF5X41tcuOryDk8w"
+        "channel_id": "UCFQsi7WaF5X41tcuOryDk8w" 
     }
 ]
 
@@ -41,8 +42,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
     req = urllib.request.Request(
         rss_url,
         headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
     )
     videos = []
@@ -69,51 +69,34 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
+    """使用 iOS 和 Android_VR 客户端直接下载音频，避开 Web 端的 PO Token 限制"""
     if os.path.exists(output_path):
-        os.remove(output_path)
-        
-    cookie_file = None
-    yt_cookies = os.environ.get("YT_COOKIES", "").strip()
-    if yt_cookies:
-        cookie_file = os.path.abspath("temp_cookies.txt")
-        with open(cookie_file, "w", encoding="utf-8") as f:
-            if not yt_cookies.startswith("# Netscape"):
-                f.write("# Netscape HTTP Cookie File\n")
-            f.write(yt_cookies + "\n")
-        print(f"✅ 已成功挂载 YouTube Cookies（长度: {len(yt_cookies)} 字符）")
-    else:
-        print("⚠️ 警告: 未在环境变量中检测到 YT_COOKIES！")
+        try:
+            os.remove(output_path)
+        except Exception:
+            pass
 
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'ba/b',
         'outtmpl': 'temp_audio.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '64',
         }],
-        # 配合 Web Cookies 使用 web / mweb 客户端
+        # 强制使用无需 PO Token 的移动端和 VR 客户端
         'extractor_args': {
             'youtube': {
-                'player_client': ['web', 'mweb', 'android'],
+                'player_client': ['ios', 'android_vr', 'tv'],
+                'player_skip': ['web', 'mweb', 'configs'],
             }
         },
         'quiet': False,
         'no_warnings': False
     }
-    
-    if cookie_file and os.path.exists(cookie_file):
-        ydl_opts['cookiefile'] = cookie_file
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-    finally:
-        if cookie_file and os.path.exists(cookie_file):
-            try:
-                os.remove(cookie_file)
-            except Exception:
-                pass
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([video_url])
             
     return output_path
 
