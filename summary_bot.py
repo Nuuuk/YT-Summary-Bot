@@ -9,7 +9,7 @@ import yt_dlp
 import markdown
 from google import genai
 
-# 填入提取到的真实 YouTube Channel ID (以 UC 开头)
+# 频道配置
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
@@ -17,7 +17,7 @@ CHANNELS = [
     },
     {
         "name": "RhinoFinance",
-        "channel_id": "UCFQsi7WaF5X41tcuOryDk8w"
+        "channel_id": "UCFQS17WaF5X41tcuOryDk8w"
     }
 ]
 
@@ -28,8 +28,7 @@ def load_history():
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"读取历史记录出错: {e}")
+        except Exception:
             return []
     return []
 
@@ -38,7 +37,6 @@ def save_history(history):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 def get_latest_videos_rss(channel_id, max_check=2):
-    """直接通过官方 RSS XML 获取最新视频，100% 稳定免风控"""
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     req = urllib.request.Request(
         rss_url,
@@ -65,7 +63,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def download_audio(video_url, output_path="temp_audio.mp3"):
-    """宽容匹配音频格式，由 FFmpeg 统一提取并压缩为 MP3"""
+    """强制使用移动端与TV客户端解析流，避开 Web 端的流限制"""
     if os.path.exists(output_path):
         os.remove(output_path)
         
@@ -76,17 +74,19 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
             f.write(os.environ["YT_COOKIES"].strip())
 
     ydl_opts = {
-        # 核心改动：使用 bestaudio/best，兼顾直播回放、webm、m4a 及合并视频流
-        'format': 'bestaudio/best',
+        # 宽容选择音频流，不限特定编码
+        'format': 'ba/ba*/b',
         'outtmpl': 'temp_audio.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '64',
         }],
+        # 核心：仅保留 android, ios, tv_embedded，彻底排除 web
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web']
+                'player_client': ['android', 'ios', 'tv_embedded'],
+                'player_skip': ['web', 'configs'],
             }
         },
         'quiet': False,
@@ -109,7 +109,6 @@ def download_audio(video_url, output_path="temp_audio.mp3"):
     return output_path
 
 def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
-    """调用 Gemini API 提取无字幕音频中的核心观点"""
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
     print(f"正在上传音频到 Gemini File API: {video_title}...")
@@ -155,7 +154,6 @@ def summarize_with_gemini(audio_path, channel_name, video_title, video_url):
     return response.text
 
 def send_email(subject, markdown_body):
-    """发送排版邮件"""
     sender = os.environ["SENDER_EMAIL"]
     password = os.environ["SENDER_PASSWORD"]
     receiver = os.environ["RECEIVER_EMAIL"]
