@@ -9,7 +9,6 @@ import markdown
 from google import genai
 from google.genai import types
 
-# 监控的 YouTube 频道配置（频道 ID 区分大小写）
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
@@ -37,7 +36,6 @@ def save_history(history):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 def get_latest_videos_rss(channel_id, max_check=2):
-    """通过 YouTube 官方 RSS 接口获取最新视频列表"""
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     req = urllib.request.Request(
         rss_url,
@@ -69,7 +67,6 @@ def get_latest_videos_rss(channel_id, max_check=2):
     return videos
 
 def summarize_with_gemini(channel_name, video_title, video_url):
-    """使用 Gemini 原生 YouTube URL 直连理解能力"""
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
     prompt = f"""
@@ -100,9 +97,9 @@ def summarize_with_gemini(channel_name, video_title, video_url):
 """
     print(f"正在请求 Google Gemini 官方服务器直连分析 YouTube: {video_url}...")
     
-    # 核心：直接向 Gemini 传入 YouTube URL，由 Google 后端直读，免除本地下载
+    # 使用官方标准 gemini-2.0-flash 模型
     response = client.models.generate_content(
-        model='gemini-2.5-flash',
+        model='gemini-2.0-flash',
         contents=types.Content(
             parts=[
                 types.Part(
@@ -115,7 +112,6 @@ def summarize_with_gemini(channel_name, video_title, video_url):
     return response.text
 
 def send_email(subject, markdown_body):
-    """发送 HTML 排版邮件"""
     sender = os.environ["SENDER_EMAIL"]
     password = os.environ["SENDER_PASSWORD"]
     receiver = os.environ["RECEIVER_EMAIL"]
