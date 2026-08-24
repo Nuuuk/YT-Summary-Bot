@@ -33,6 +33,7 @@ jobs:
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
           python summary_bot.py
 
