@@ -25,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install yt-dlp google-genai markdown
+          pip install --upgrade yt-dlp google-genai markdown
 
       - name: Run Summary Bot
         env:
