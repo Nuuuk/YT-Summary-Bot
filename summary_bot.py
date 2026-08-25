@@ -1,6 +1,6 @@
 import os
 import json
-import time  # <--- 新增
+import time
 import smtplib
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -79,7 +79,7 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
 即使视频没有字幕，请直接根据视频/音频内容进行精准、深度的结构化总结与信息提取。
 
 请按以下格式输出结构化中文简报：
-# 📊 【{channel_name}】最新视频观点精要
+# 📊 【{channel_name}】最新观点精要
 **视频标题**：{video_title}
 **原片链接**：{video_url}
 
@@ -97,25 +97,23 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
 
 ### 五、 ⚠️ 风险提示与操作策略总结（如有）
 """
-for attempt in range(1, max_retries + 1):
-    try:
-    print(f"正在请求 Google Gemini 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)......")
-    # 使用 gemini-3.7-flash 模型
-    response = client.models.generate_content(
-        model='gemini-3.7-flash',
-        contents=types.Content(
-            parts=[
-                types.Part(file_data=types.FileData(file_uri=video_url)),
-                types.Part(text=prompt)
-            ]
-        )
-    )
-        return response.text
-    except Exception as e:
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"正在请求 Google Gemini 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)...")
+            response = client.models.generate_content(
+                model='gemini-3.7-flash',
+                contents=types.Content(
+                    parts=[
+                        types.Part(file_data=types.FileData(file_uri=video_url)),
+                        types.Part(text=prompt)
+                    ]
+                )
+            )
+            return response.text
+        except Exception as e:
             err_str = str(e)
-            # 针对 503 服务器繁忙 或 429 速率限制 进行自动等待并重试
             if ("503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str) and attempt < max_retries:
-                wait_seconds = attempt * 30  # 第1次失败等30秒，第2次失败等60秒
+                wait_seconds = attempt * 30
                 print(f"⚠️ 遇到临时服务器拥堵/限流 (503/429)，等待 {wait_seconds} 秒后重试...")
                 time.sleep(wait_seconds)
             else:
@@ -149,7 +147,7 @@ def send_email(subject, markdown_body):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(sender, password)
         server.sendmail(sender, receiver, msg.as_string())
-    print(">>> 邮件发送成功！")
+    print(">>> ✅ 邮件发送成功！")
 
 def main():
     history = load_history()
@@ -174,18 +172,15 @@ def main():
                     
                 print(f"  └ 发现新视频，交给 Gemini 分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
-
-                # 优化邮件标题：精简前缀并限制最大长度
-                max_title_length = 30
-                short_title = video['title'][:max_title_length] + "..." if len(video['title']) > max_title_length else video['title']
-                subject = f"【YT】{name}：{short_title}"
                 
-                # 明确执行邮件发送
+                raw_title = video['title']
+                short_title = raw_title[:32] + "..." if len(raw_title) > 32 else raw_title
+                subject = f"【YT精要】{name}：{short_title}"
+                
                 send_email(subject, summary)
                 
                 new_history.append(v_id)
                 
-                # ======== 新增：避开 API 每分钟限流 ========
                 print("已处理完一个视频，休眠 60 秒以恢复免费 Token 额度...")
                 time.sleep(60)
                     
