@@ -98,7 +98,7 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
 ### 五、 ⚠️ 风险提示与操作策略总结（如有）
 """
 for attempt in range(1, max_retries + 1):
-try:
+    try:
     print(f"正在请求 Google Gemini 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)......")
     # 使用 gemini-3.7-flash 模型
     response = client.models.generate_content(
@@ -110,7 +110,7 @@ try:
             ]
         )
     )
-    return response.text
+        return response.text
     except Exception as e:
             err_str = str(e)
             # 针对 503 服务器繁忙 或 429 速率限制 进行自动等待并重试
