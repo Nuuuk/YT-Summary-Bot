@@ -17,7 +17,7 @@ CHANNELS = [
         "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg"
     },
     {
-        "name": "RhinoFinance",
+        "name": "视野环球财经",
         "channel_id": "UCFQsi7WaF5X41tcuOryDk8w"
     }
 ]
@@ -68,7 +68,7 @@ def get_latest_videos_rss(channel_id, max_check=2):
         print(f"获取频道 RSS 失败 ({channel_id}): {e}")
     return videos
 
-def summarize_with_gemini(channel_name, video_title, video_url):
+def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     
     prompt = f"""
@@ -97,21 +97,29 @@ def summarize_with_gemini(channel_name, video_title, video_url):
 
 ### 五、 ⚠️ 风险提示与操作策略总结（如有）
 """
-    print(f"正在请求 Google Gemini 官方服务器直连分析 YouTube: {video_url}...")
-    
-    # 使用官方标准 gemini-3.6-flash 模型
+for attempt in range(1, max_retries + 1):
+try:
+    print(f"正在请求 Google Gemini 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)......")
+    # 使用 gemini-3.7-flash 模型
     response = client.models.generate_content(
         model='gemini-3.7-flash',
         contents=types.Content(
             parts=[
-                types.Part(
-                    file_data=types.FileData(file_uri=video_url)
-                ),
+                types.Part(file_data=types.FileData(file_uri=video_url)),
                 types.Part(text=prompt)
             ]
         )
     )
     return response.text
+    except Exception as e:
+            err_str = str(e)
+            # 针对 503 服务器繁忙 或 429 速率限制 进行自动等待并重试
+            if ("503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str) and attempt < max_retries:
+                wait_seconds = attempt * 30  # 第1次失败等30秒，第2次失败等60秒
+                print(f"⚠️ 遇到临时服务器拥堵/限流 (503/429)，等待 {wait_seconds} 秒后重试...")
+                time.sleep(wait_seconds)
+            else:
+                raise e
 
 def send_email(subject, markdown_body):
     sender = os.environ["SENDER_EMAIL"]
