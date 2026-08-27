@@ -14,16 +14,19 @@ CHANNELS = [
     {
         "name": "私募一哥常士杉",
         "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg",
-        "tab": "streams"   # 常士杉主打直播回放
+        "tab": "streams"   # 直播回放
     },
     {
         "name": "视野环球财经",
         "channel_id": "UCFQsi7WaF5X41tcuOryDk8w",
-        "tab": "videos"    # RhinoFinance 主打常规视频
+        "tab": "videos"    # 常规录播视频
     }
 ]
 
 HISTORY_FILE = "processed_videos.json"
+
+# 3级智能模型降级链（完全停用 2.5）
+MODELS_PRIORITY = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -39,7 +42,7 @@ def save_history(history):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 def get_channel_latest_videos(channel_id, tab="videos", max_check=2):
-    """使用 yt-dlp 精准提取目标标签页（streams 或 videos）的最新内容"""
+    """使用 yt-dlp 精准提取目标标签页的最新内容元数据"""
     ydl_opts = {
         'extract_flat': True,
         'quiet': True,
@@ -68,11 +71,11 @@ def get_channel_latest_videos(channel_id, tab="videos", max_check=2):
         
     return videos[:max_check]
 
-def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
-    # 设置 300 秒长超时，防止长直播分析期间连接中断
+def summarize_with_gemini(channel_name, video_title, video_url, max_retries_per_model=2):
+    """3级模型自动轮换降级与网络断连自动重试机制"""
     client = genai.Client(
         api_key=os.environ["GEMINI_API_KEY"],
-        http_options={'timeout': 300000}
+        http_options={'timeout': 300000}  # 5分钟超时保护
     )
     
     prompt = f"""
@@ -101,33 +104,39 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
 
 ### 五、 ⚠️ 风险提示与操作策略总结（如有）
 """
-    for attempt in range(1, max_retries + 1):
-        try:
-            print(f"正在请求 Google Gemini Flash 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)...")
-            response = client.models.generate_content(
-                model='gemini-3.7-flash',
-                contents=types.Content(
-                    parts=[
-                        types.Part(file_data=types.FileData(file_uri=video_url)),
-                        types.Part(text=prompt)
-                    ]
+    last_exception = None
+
+    for model_name in MODELS_PRIORITY:
+        for attempt in range(1, max_retries_per_model + 1):
+            try:
+                print(f"正在使用 [{model_name}] 进行分析 (第 {attempt}/{max_retries_per_model} 次)...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=types.Content(
+                        parts=[
+                            types.Part(file_data=types.FileData(file_uri=video_url)),
+                            types.Part(text=prompt)
+                        ]
+                    )
                 )
-            )
-            return response.text
-        except Exception as e:
-            err_str = str(e).lower()
-            # 捕获限流、503 拥堵以及长连接断开/超时异常
-            is_retryable = any(keyword in err_str for keyword in [
-                "503", "unavailable", "429", "resource_exhausted",
-                "disconnected", "timeout", "timed out", "connectionreset", "remotedisconnected"
-            ])
-            
-            if is_retryable and attempt < max_retries:
-                wait_seconds = attempt * 35
-                print(f"⚠️ 遇到临时异常（网络断连/服务端限流），等待 {wait_seconds} 秒后重试...")
-                time.sleep(wait_seconds)
-            else:
-                raise e
+                return response.text
+            except Exception as e:
+                last_exception = e
+                err_str = str(e).lower()
+                is_retryable = any(k in err_str for k in [
+                    "503", "unavailable", "429", "resource_exhausted",
+                    "disconnected", "timeout", "timed out", "connectionreset", "remotedisconnected"
+                ])
+                if is_retryable and attempt < max_retries_per_model:
+                    wait_sec = 30 * attempt
+                    print(f"⚠️ [{model_name}] 遇到服务器拥堵/网络抖动，等待 {wait_sec} 秒后重试...")
+                    time.sleep(wait_sec)
+                else:
+                    break
+        
+        print(f"🔄 模型 [{model_name}] 暂时无法响应，正在自动切换至下一个模型...")
+
+    raise last_exception
 
 def send_email(subject, markdown_body):
     sender = os.environ["SENDER_EMAIL"]
@@ -181,7 +190,7 @@ def main():
                     print(f"  └ 该视频/直播已在历史记录中，跳过。")
                     continue
                     
-                print(f"  └ 发现新内容，交给 Gemini Flash 分析中...")
+                print(f"  └ 发现新内容，交给 Gemini 自动分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
                 
                 raw_title = video['title']
