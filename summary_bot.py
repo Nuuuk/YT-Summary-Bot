@@ -9,15 +9,17 @@ import markdown
 from google import genai
 from google.genai import types
 
-# 监控的 YouTube 频道配置
+# 监控的 YouTube 频道配置（指定直播 streams 或常规录播 videos）
 CHANNELS = [
     {
         "name": "私募一哥常士杉",
-        "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg"
+        "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg",
+        "tab": "streams"   # 常士杉主打直播回放
     },
     {
-        "name": "RhinoFinance",
-        "channel_id": "UCFQsi7WaF5X41tcuOryDk8w"
+        "name": "视野环球财经",
+        "channel_id": "UCFQsi7WaF5X41tcuOryDk8w",
+        "tab": "videos"    # RhinoFinance 主打常规视频
     }
 ]
 
@@ -36,46 +38,42 @@ def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def get_channel_latest_videos(channel_id, max_check=2):
-    """
-    使用 yt-dlp 快速提取列表元数据（不下载音视频），
-    优先抓取 /streams 直播回放，再抓取 /videos 常规视频。
-    """
+def get_channel_latest_videos(channel_id, tab="videos", max_check=2):
+    """使用 yt-dlp 精准提取目标标签页（streams 或 videos）的最新内容"""
     ydl_opts = {
         'extract_flat': True,
         'quiet': True,
         'no_warnings': True,
         'playlist_items': f'1-{max_check}',
     }
-    
+    url = f"https://www.youtube.com/channel/{channel_id}/{tab}"
     videos = []
-    seen_ids = set()
-    
-    for tab in ['streams', 'videos']:
-        url = f"https://www.youtube.com/channel/{channel_id}/{tab}"
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info and 'entries' in info:
-                    for entry in info['entries']:
-                        if not entry:
-                            continue
-                        v_id = entry.get('id')
-                        v_title = entry.get('title')
-                        if v_id and v_title and v_id not in seen_ids:
-                            seen_ids.add(v_id)
-                            videos.append({
-                                'id': v_id,
-                                'title': v_title,
-                                'url': f"https://www.youtube.com/watch?v={v_id}"
-                            })
-        except Exception as e:
-            print(f"  └ 提取 [{tab}] 标签页失败 ({channel_id}): {e}")
-            
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info and 'entries' in info:
+                for entry in info['entries']:
+                    if not entry:
+                        continue
+                    v_id = entry.get('id')
+                    v_title = entry.get('title')
+                    if v_id and v_title:
+                        videos.append({
+                            'id': v_id,
+                            'title': v_title,
+                            'url': f"https://www.youtube.com/watch?v={v_id}"
+                        })
+    except Exception as e:
+        print(f"  └ 提取 [{tab}] 标签页失败 ({channel_id}): {e}")
+        
     return videos[:max_check]
 
 def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    # 设置 300 秒长超时，防止长直播分析期间连接中断
+    client = genai.Client(
+        api_key=os.environ["GEMINI_API_KEY"],
+        http_options={'timeout': 300000}
+    )
     
     prompt = f"""
 你是一位资深的金融与宏观市场分析助理。这是 YouTube 财经频道【{channel_name}】最新发布的视频/直播：
@@ -105,7 +103,7 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
 """
     for attempt in range(1, max_retries + 1):
         try:
-            print(f"正在请求 Google Gemini 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)...")
+            print(f"正在请求 Google Gemini Flash 分析: {video_title} (第 {attempt}/{max_retries} 次尝试)...")
             response = client.models.generate_content(
                 model='gemini-3.7-flash',
                 contents=types.Content(
@@ -117,10 +115,16 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
             )
             return response.text
         except Exception as e:
-            err_str = str(e)
-            if ("503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str) and attempt < max_retries:
-                wait_seconds = attempt * 30
-                print(f"⚠️ 遇到临时服务器拥堵/限流 (503/429)，等待 {wait_seconds} 秒后重试...")
+            err_str = str(e).lower()
+            # 捕获限流、503 拥堵以及长连接断开/超时异常
+            is_retryable = any(keyword in err_str for keyword in [
+                "503", "unavailable", "429", "resource_exhausted",
+                "disconnected", "timeout", "timed out", "connectionreset", "remotedisconnected"
+            ])
+            
+            if is_retryable and attempt < max_retries:
+                wait_seconds = attempt * 35
+                print(f"⚠️ 遇到临时异常（网络断连/服务端限流），等待 {wait_seconds} 秒后重试...")
                 time.sleep(wait_seconds)
             else:
                 raise e
@@ -162,12 +166,13 @@ def main():
     for channel in CHANNELS:
         name = channel["name"]
         cid = channel["channel_id"]
+        tab = channel.get("tab", "videos")
         print(f"\n==========================================")
-        print(f"正在扫描频道: {name} (ID: {cid})")
+        print(f"正在扫描频道: {name} (ID: {cid} | 来源: {tab})")
         
         try:
-            latest_videos = get_channel_latest_videos(cid, max_check=2)
-            print(f"成功获取到 {len(latest_videos)} 个最新内容候选。")
+            latest_videos = get_channel_latest_videos(cid, tab=tab, max_check=2)
+            print(f"成功获取到 {len(latest_videos)} 个最新内容。")
             
             for video in latest_videos:
                 v_id = video["id"]
@@ -176,7 +181,7 @@ def main():
                     print(f"  └ 该视频/直播已在历史记录中，跳过。")
                     continue
                     
-                print(f"  └ 发现新内容，交给 Gemini 3.7 Flash 分析中...")
+                print(f"  └ 发现新内容，交给 Gemini Flash 分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
                 
                 raw_title = video['title']
