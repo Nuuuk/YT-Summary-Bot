@@ -2,9 +2,9 @@ name: YouTube Auto Summary Daily
 
 on:
   schedule:
-    # 美东时间中午 12:00 (16:00 UTC) 和 晚上 21:30 (次日 01:30 UTC)
-    - cron: '0 16 * * *'
-    - cron: '30 1 * * *'
+    # 美东时间中午 12:17 (16:17 UTC) 和 晚上 21:27 (次日 01:27 UTC)
+    - cron: '17 16 * * *'
+    - cron: '27 1 * * *'
   workflow_dispatch:
 
 permissions:
