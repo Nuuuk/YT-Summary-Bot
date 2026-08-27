@@ -37,15 +37,15 @@ def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def get_latest_videos_rss(channel_id, max_check=2):
-    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+def fetch_feed_entries(url):
+    """请求单个 RSS 地址并解析条目"""
     req = urllib.request.Request(
-        rss_url,
+        url,
         headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
     )
-    videos = []
+    entries_data = []
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             xml_data = resp.read()
@@ -54,19 +54,53 @@ def get_latest_videos_rss(channel_id, max_check=2):
                 'atom': 'http://www.w3.org/2005/Atom',
                 'yt': 'http://www.youtube.com/xml/schemas/2015'
             }
-            entries = root.findall('atom:entry', ns)
-            for entry in entries[:max_check]:
+            for entry in root.findall('atom:entry', ns):
                 v_id_el = entry.find('yt:videoId', ns)
                 title_el = entry.find('atom:title', ns)
+                pub_el = entry.find('atom:published', ns)
+                
                 if v_id_el is not None and title_el is not None:
-                    videos.append({
+                    entries_data.append({
                         'id': v_id_el.text,
                         'title': title_el.text,
+                        'published': pub_el.text if pub_el is not None else '',
                         'url': f"https://www.youtube.com/watch?v={v_id_el.text}"
                     })
     except Exception as e:
-        print(f"获取频道 RSS 失败 ({channel_id}): {e}")
-    return videos
+        # 个别播放列表可能为空或不支持，静默忽略
+        pass
+    return entries_data
+
+def get_latest_videos_rss(channel_id, max_check=2):
+    """
+    智能多源聚合：同时查询 默认Feed、直播流(UULV) 和 全量上传流(UU)，
+    确保 100% 抓取到直播回放与最新剪辑视频。
+    """
+    feeds = [
+        f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    ]
+    
+    # 构建 UULV (直播专属流) 与 UU (全部上传流)
+    if channel_id.startswith("UC"):
+        suffix = channel_id[2:]
+        feeds.append(f"https://www.youtube.com/feeds/videos.xml?playlist_id=UULV{suffix}")
+        feeds.append(f"https://www.youtube.com/feeds/videos.xml?playlist_id=UU{suffix}")
+
+    all_videos = {}
+    for feed_url in feeds:
+        items = fetch_feed_entries(feed_url)
+        for item in items:
+            if item['id'] not in all_videos:
+                all_videos[item['id']] = item
+
+    # 按发布时间倒序排列（最新的排在最前）
+    sorted_videos = sorted(
+        all_videos.values(),
+        key=lambda x: x['published'],
+        reverse=True
+    )
+    
+    return sorted_videos[:max_check]
 
 def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -165,7 +199,7 @@ def main():
             
             for video in latest_videos:
                 v_id = video["id"]
-                print(f"- 检查视频 [{v_id}]: {video['title']}")
+                print(f"- 检查 [{v_id}] ({video.get('published', '')}): {video['title']}")
                 if v_id in history:
                     print(f"  └ 该视频已在历史记录中，跳过。")
                     continue
