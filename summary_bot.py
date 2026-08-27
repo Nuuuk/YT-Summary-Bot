@@ -1,11 +1,10 @@
 import os
 import json
 import time
-import re
 import smtplib
-import urllib.request
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import yt_dlp
 import markdown
 from google import genai
 from google.genai import types
@@ -37,81 +36,43 @@ def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def extract_videos_from_json(data):
-    """从 YouTube 内部 JSON 结构中递归提取视频 ID 与标题"""
-    results = []
-    def recurse(node):
-        if isinstance(node, dict):
-            if "videoId" in node and "title" in node:
-                v_id = node["videoId"]
-                title_obj = node["title"]
-                title = ""
-                if isinstance(title_obj, dict):
-                    if "runs" in title_obj and title_obj["runs"]:
-                        title = "".join([r.get("text", "") for r in title_obj["runs"]])
-                    elif "simpleText" in title_obj:
-                        title = title_obj.get("simpleText", "")
-                elif isinstance(title_obj, str):
-                    title = title_obj
-                
-                if isinstance(v_id, str) and len(v_id) == 11 and title:
-                    results.append({
-                        'id': v_id,
-                        'title': title,
-                        'url': f"https://www.youtube.com/watch?v={v_id}"
-                    })
-            for v in node.values():
-                recurse(v)
-        elif isinstance(node, list):
-            for item in node:
-                recurse(item)
-    recurse(data)
-    
-    # 保持原网页顺序去重
-    seen = set()
-    deduped = []
-    for r in results:
-        if r['id'] not in seen:
-            seen.add(r['id'])
-            deduped.append(r)
-    return deduped
-
-def get_videos_from_tab(channel_id, tab="streams", limit=2):
-    """直接解析 YouTube 频道的 streams(直播) 或 videos(录播) 页面"""
-    url = f"https://www.youtube.com/channel/{channel_id}/{tab}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode('utf-8', errors='ignore')
-            m = re.search(r'ytInitialData\s*=\s*', html)
-            if m:
-                data = json.JSONDecoder().raw_decode(html[m.end():])[0]
-                videos = extract_videos_from_json(data)
-                return videos[:limit]
-    except Exception as e:
-        print(f"  └ 抓取 [{tab}] 标签页出现异常 ({channel_id}): {e}")
-    return []
-
 def get_channel_latest_videos(channel_id, max_check=2):
-    """同时获取最新的直播流与常规视频，确保零遗漏"""
-    streams = get_videos_from_tab(channel_id, tab="streams", limit=max_check)
-    videos = get_videos_from_tab(channel_id, tab="videos", limit=max_check)
+    """
+    使用 yt-dlp 快速提取列表元数据（不下载音视频），
+    优先抓取 /streams 直播回放，再抓取 /videos 常规视频。
+    """
+    ydl_opts = {
+        'extract_flat': True,
+        'quiet': True,
+        'no_warnings': True,
+        'playlist_items': f'1-{max_check}',
+    }
     
-    combined = []
-    seen = set()
-    # 优先收录最新直播，再收录最新录播视频
-    for v in streams + videos:
-        if v['id'] not in seen:
-            seen.add(v['id'])
-            combined.append(v)
+    videos = []
+    seen_ids = set()
+    
+    for tab in ['streams', 'videos']:
+        url = f"https://www.youtube.com/channel/{channel_id}/{tab}"
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info and 'entries' in info:
+                    for entry in info['entries']:
+                        if not entry:
+                            continue
+                        v_id = entry.get('id')
+                        v_title = entry.get('title')
+                        if v_id and v_title and v_id not in seen_ids:
+                            seen_ids.add(v_id)
+                            videos.append({
+                                'id': v_id,
+                                'title': v_title,
+                                'url': f"https://www.youtube.com/watch?v={v_id}"
+                            })
+        except Exception as e:
+            print(f"  └ 提取 [{tab}] 标签页失败 ({channel_id}): {e}")
             
-    return combined
+    return videos[:max_check]
 
 def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -215,7 +176,7 @@ def main():
                     print(f"  └ 该视频/直播已在历史记录中，跳过。")
                     continue
                     
-                print(f"  └ 发现新内容，交给 Gemini 分析中...")
+                print(f"  └ 发现新内容，交给 Gemini 3.7 Flash 分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
                 
                 raw_title = video['title']
