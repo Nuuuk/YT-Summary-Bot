@@ -1,9 +1,9 @@
 import os
 import json
 import time
+import re
 import smtplib
 import urllib.request
-import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import markdown
@@ -17,7 +17,7 @@ CHANNELS = [
         "channel_id": "UCq_6F1GwN58l_OZaQgFHNrg"
     },
     {
-        "name": "视野环球财经",
+        "name": "RhinoFinance",
         "channel_id": "UCFQsi7WaF5X41tcuOryDk8w"
     }
 ]
@@ -37,70 +37,81 @@ def save_history(history):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def fetch_feed_entries(url):
-    """请求单个 RSS 地址并解析条目"""
+def extract_videos_from_json(data):
+    """从 YouTube 内部 JSON 结构中递归提取视频 ID 与标题"""
+    results = []
+    def recurse(node):
+        if isinstance(node, dict):
+            if "videoId" in node and "title" in node:
+                v_id = node["videoId"]
+                title_obj = node["title"]
+                title = ""
+                if isinstance(title_obj, dict):
+                    if "runs" in title_obj and title_obj["runs"]:
+                        title = "".join([r.get("text", "") for r in title_obj["runs"]])
+                    elif "simpleText" in title_obj:
+                        title = title_obj.get("simpleText", "")
+                elif isinstance(title_obj, str):
+                    title = title_obj
+                
+                if isinstance(v_id, str) and len(v_id) == 11 and title:
+                    results.append({
+                        'id': v_id,
+                        'title': title,
+                        'url': f"https://www.youtube.com/watch?v={v_id}"
+                    })
+            for v in node.values():
+                recurse(v)
+        elif isinstance(node, list):
+            for item in node:
+                recurse(item)
+    recurse(data)
+    
+    # 保持原网页顺序去重
+    seen = set()
+    deduped = []
+    for r in results:
+        if r['id'] not in seen:
+            seen.add(r['id'])
+            deduped.append(r)
+    return deduped
+
+def get_videos_from_tab(channel_id, tab="streams", limit=2):
+    """直接解析 YouTube 频道的 streams(直播) 或 videos(录播) 页面"""
+    url = f"https://www.youtube.com/channel/{channel_id}/{tab}"
     req = urllib.request.Request(
         url,
         headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
         }
     )
-    entries_data = []
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            xml_data = resp.read()
-            root = ET.fromstring(xml_data)
-            ns = {
-                'atom': 'http://www.w3.org/2005/Atom',
-                'yt': 'http://www.youtube.com/xml/schemas/2015'
-            }
-            for entry in root.findall('atom:entry', ns):
-                v_id_el = entry.find('yt:videoId', ns)
-                title_el = entry.find('atom:title', ns)
-                pub_el = entry.find('atom:published', ns)
-                
-                if v_id_el is not None and title_el is not None:
-                    entries_data.append({
-                        'id': v_id_el.text,
-                        'title': title_el.text,
-                        'published': pub_el.text if pub_el is not None else '',
-                        'url': f"https://www.youtube.com/watch?v={v_id_el.text}"
-                    })
+            html = resp.read().decode('utf-8', errors='ignore')
+            m = re.search(r'ytInitialData\s*=\s*', html)
+            if m:
+                data = json.JSONDecoder().raw_decode(html[m.end():])[0]
+                videos = extract_videos_from_json(data)
+                return videos[:limit]
     except Exception as e:
-        # 个别播放列表可能为空或不支持，静默忽略
-        pass
-    return entries_data
+        print(f"  └ 抓取 [{tab}] 标签页出现异常 ({channel_id}): {e}")
+    return []
 
-def get_latest_videos_rss(channel_id, max_check=2):
-    """
-    智能多源聚合：同时查询 默认Feed、直播流(UULV) 和 全量上传流(UU)，
-    确保 100% 抓取到直播回放与最新剪辑视频。
-    """
-    feeds = [
-        f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-    ]
+def get_channel_latest_videos(channel_id, max_check=2):
+    """同时获取最新的直播流与常规视频，确保零遗漏"""
+    streams = get_videos_from_tab(channel_id, tab="streams", limit=max_check)
+    videos = get_videos_from_tab(channel_id, tab="videos", limit=max_check)
     
-    # 构建 UULV (直播专属流) 与 UU (全部上传流)
-    if channel_id.startswith("UC"):
-        suffix = channel_id[2:]
-        feeds.append(f"https://www.youtube.com/feeds/videos.xml?playlist_id=UULV{suffix}")
-        feeds.append(f"https://www.youtube.com/feeds/videos.xml?playlist_id=UU{suffix}")
-
-    all_videos = {}
-    for feed_url in feeds:
-        items = fetch_feed_entries(feed_url)
-        for item in items:
-            if item['id'] not in all_videos:
-                all_videos[item['id']] = item
-
-    # 按发布时间倒序排列（最新的排在最前）
-    sorted_videos = sorted(
-        all_videos.values(),
-        key=lambda x: x['published'],
-        reverse=True
-    )
-    
-    return sorted_videos[:max_check]
+    combined = []
+    seen = set()
+    # 优先收录最新直播，再收录最新录播视频
+    for v in streams + videos:
+        if v['id'] not in seen:
+            seen.add(v['id'])
+            combined.append(v)
+            
+    return combined
 
 def summarize_with_gemini(channel_name, video_title, video_url, max_retries=3):
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -194,17 +205,17 @@ def main():
         print(f"正在扫描频道: {name} (ID: {cid})")
         
         try:
-            latest_videos = get_latest_videos_rss(cid, max_check=2)
-            print(f"成功获取到 {len(latest_videos)} 个最新视频。")
+            latest_videos = get_channel_latest_videos(cid, max_check=2)
+            print(f"成功获取到 {len(latest_videos)} 个最新内容候选。")
             
             for video in latest_videos:
                 v_id = video["id"]
-                print(f"- 检查 [{v_id}] ({video.get('published', '')}): {video['title']}")
+                print(f"- 检查 [{v_id}]: {video['title']}")
                 if v_id in history:
-                    print(f"  └ 该视频已在历史记录中，跳过。")
+                    print(f"  └ 该视频/直播已在历史记录中，跳过。")
                     continue
                     
-                print(f"  └ 发现新视频，交给 Gemini 分析中...")
+                print(f"  └ 发现新内容，交给 Gemini 分析中...")
                 summary = summarize_with_gemini(name, video['title'], video['url'])
                 
                 raw_title = video['title']
