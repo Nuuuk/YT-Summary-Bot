@@ -25,8 +25,12 @@ CHANNELS = [
 
 HISTORY_FILE = "processed_videos.json"
 
-# 3级智能模型降级链（完全停用 2.5）
-MODELS_PRIORITY = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']
+# 从环境变量读取，支持用逗号分隔配置多个模型；若未配置则使用默认排序
+env_models = os.environ.get("GEMINI_MODELS")
+if env_models:
+    MODELS_PRIORITY = [m.strip() for m in env_models.split(",") if m.strip()]
+else:
+    MODELS_PRIORITY = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
