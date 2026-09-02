@@ -1,10 +1,10 @@
 name: YouTube Auto Summary Daily
 
 on:
-  schedule:
-    # 美东时间中午 12:17 (16:17 UTC) 和 晚上 21:27 (次日 01:27 UTC)
-    - cron: '17 16 * * *'
-    - cron: '27 1 * * *'
+  # 接收来自 cron-job.org 的外部 Webhook 触发
+  repository_dispatch:
+    types: [run_summary]
+  # 保留 GitHub 页面手动点击触发按钮
   workflow_dispatch:
 
 permissions:
