@@ -26,7 +26,7 @@ CHANNELS = [
 HISTORY_FILE = "processed_videos.json"
 
 # 3级智能模型降级链（完全停用 2.5）
-MODELS_PRIORITY = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']
+MODELS_PRIORITY = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash']
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
