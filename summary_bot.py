@@ -89,25 +89,35 @@ def summarize_with_gemini(channel_name, video_title, video_url, max_retries_per_
 
 即使视频没有字幕，请直接根据视频/音频内容进行精准、深度的结构化总结与信息提取。
 
-请按以下格式输出结构化中文简报：
+请严格按以下格式输出，严禁把主标题和解释句子混在同一个编号列表里：
 # 📊 【{channel_name}】最新观点精要
 **视频标题**：{video_title}
 **原片链接**：{video_url}
 
 ---
 
-### 一、 💡 核心主题与大盘/宏观定调（2-3句话总结）
+### 一、💡 核心主题与大盘/宏观定调（2-3句话总结）
 
-### 二、 📌 核心交易/投资逻辑与关键观点（分条列出最关键的论据）
-（严格采用「主论点带数字编号，子论据用缩进无序列表」的层级结构，不要平铺排号。示例格式：
-1. **核心论点名称**：
-   * 论据说明或因果逻辑
-   * 关键支撑数据或测算
-2. **下一个核心论点名称**：
-   * 论据说明...
-）
-### 三、 🎯 涉及板块、行业、重要标的及对应态度
-* （梳理重点讨论的行业/板块，如有提及具体标的或公司，说明核心逻辑是看多、看空还是中性）
+### 二、📌 核心交易/投资逻辑与关键观点（分条列出最关键的论据）
+（每个核心大论点必须用 #### 标题单独成行，下面的论据和细节用无序列表 * 展开，示例：）
+
+#### 1. 全球市场窗口期风险与宏观外溢
+* **核心逻辑**：阐述具体的因果逻辑与推演过程。
+* **数据支撑**：关键时间节点、加息基点或测算数据。
+
+#### 2. A股/科创板走势与博弈困境
+* **核心逻辑**：阐述具体观点。
+* **操作结论**：仓位控制与应对思路。
+
+### 三、🎯 涉及板块、行业、重要标的及对应态度
+（必须按行业分类归类，行业大类用 #### 标题，标的用 * 展开，示例：）
+
+#### 📁 美股科技与卫星数据
+* **PL (Planet Labs PBC)（态度：看多）**：日内 17.1~17.2 企稳低吸，看好每日 300 万张卫星图数据壁垒。
+* **AVGO (博通)（态度：逢低参与）**：算力业绩强，346~360 支撑位明显。
+
+#### 📁 半导体与算力硬件
+* **NVDA (英伟达)（态度：谨慎/中性）**：历史高位，防范黑天鹅估值下杀。
 
 ### 四、 ⏱️ 时间线与重要讨论脉络
 * [大概时间戳] 讨论话题及关键细节
@@ -156,8 +166,19 @@ def send_email(subject, markdown_body):
     html_content = markdown.markdown(markdown_body, extensions=['extra', 'tables'])
     styled_html = f"""
     <html>
-      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #2d3748; max-width: 800px; margin: 0 auto; padding: 20px;">
-        <div style="background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 15px 20px; border-radius: 4px; margin-bottom: 20px;">
+      <head>
+        <style>
+          body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #2d3748; max-width: 800px; margin: 0 auto; padding: 20px; }}
+          .header-box {{ background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 15px 20px; border-radius: 4px; margin-bottom: 20px; }}
+          h1 {{ font-size: 20px; color: #2b6cb0; margin: 0; }}
+          h3 {{ font-size: 16px; color: #2c5282; border-bottom: 2px solid #edf2f7; padding-bottom: 6px; margin-top: 25px; }}
+          h4 {{ font-size: 14px; color: #2b6cb0; margin-top: 15px; margin-bottom: 6px; }}
+          ul {{ margin-top: 4px; padding-left: 20px; }}
+          li {{ margin-bottom: 6px; font-size: 14px; }}
+        </style>
+      </head>
+      <body>
+        <div class="header-box">
           <h2 style="margin: 0; color: #2b6cb0;">YouTube 财经频道观点简报</h2>
         </div>
         {html_content}
